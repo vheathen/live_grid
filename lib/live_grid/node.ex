@@ -1,7 +1,7 @@
 defmodule LiveGrid.Node do
   use GenServer
 
-  @app :live_grid
+  import LiveGrid.Helpers
 
   @default_initial_timeout 2_000
 
@@ -21,14 +21,10 @@ defmodule LiveGrid.Node do
 
   @impl GenServer
   def init(me) do
+    Process.send_after(self(), :link_to_peers, initial_timeout())
+
     {:ok, me}
   end
 
-  def initial_timeout, do: config(:initial_timeout)
-
-  def config(key) do
-    @app
-    |> Application.get_env(Node, [])
-    |> Keyword.get(key, @default_initial_timeout)
-  end
+  def initial_timeout, do: get_config(Node, :initial_timeout, @default_initial_timeout)
 end
