@@ -2,6 +2,7 @@ defmodule LiveGrid.NodeTest do
   use LiveGrid.Case
 
   alias LiveGrid.Node, as: LiveNode
+  alias LiveGrid.Node.State
 
   setup do
     me = {0, 0}
@@ -35,12 +36,16 @@ defmodule LiveGrid.NodeTest do
   end
 
   describe "init/1" do
-    test "should send :connect_to_peers message after :initial_timeout", %{me: me} do
+    test "should return a state with its coordinate", %{me: me} do
+      assert {:ok, %{me: ^me}} = LiveNode.init(me)
+    end
+
+    test "should send :connect_to_peers message to itself after :initial_timeout", %{me: me} do
       configure(Node, :initial_timeout, 50)
+
       assert {:ok, _} = LiveNode.init(me)
 
       refute_receive :link_to_peers, 45
-
       assert_receive :link_to_peers, 10
     end
   end

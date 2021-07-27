@@ -3,6 +3,8 @@ defmodule LiveGrid.Node do
 
   import LiveGrid.Helpers
 
+  alias LiveGrid.Node.State
+
   @default_initial_timeout 2_000
 
   @type x :: non_neg_integer()
@@ -23,7 +25,7 @@ defmodule LiveGrid.Node do
   def init(me) do
     Process.send_after(self(), :link_to_peers, initial_timeout())
 
-    {:ok, me}
+    {:ok, %State{me: me}}
   end
 
   def initial_timeout, do: get_config(Node, :initial_timeout, @default_initial_timeout)
