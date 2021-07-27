@@ -66,3 +66,10 @@ config :phoenix, :stacktrace_depth, 20
 
 # Initialize plugs at runtime for faster development compilation
 config :phoenix, :plug_init_mode, :runtime
+
+config :mix_test_watch,
+  tasks: [
+    # "test --failed --max-failures 1 --seed 0 --trace --exclude pending",
+    "test --stale --max-failures 1 --seed 0 --trace --exclude pending",
+    "test --max-failures 1 --exclude pending"
+  ]
