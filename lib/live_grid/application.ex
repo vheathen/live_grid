@@ -11,6 +11,10 @@ defmodule LiveGrid.Application do
       LiveGridWeb.Telemetry,
       # Start the PubSub system
       {Phoenix.PubSub, name: LiveGrid.PubSub},
+
+      # Start the LiveGrid registry
+      {Registry, keys: :unique, name: LiveGrid},
+
       # Start the Endpoint (http/https)
       LiveGridWeb.Endpoint
       # Start a worker by calling: LiveGrid.Worker.start_link(arg)
