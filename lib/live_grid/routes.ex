@@ -12,6 +12,7 @@ defmodule LiveGrid.Routes do
 
   @type peer :: LiveGrid.Node.peer()
   @type destination :: peer()
+  @type gateway :: peer()
 
   @type route :: LiveGrid.Routes.Route.t()
 
@@ -37,6 +38,16 @@ defmodule LiveGrid.Routes do
     case update_route(routes, destination, route) do
       {:ok, routes} -> routes
       _ -> raise StaleRouteError, {destination, route}
+    end
+  end
+
+  @spec get_next_hop(t(), destination()) :: gateway() | nil
+  def get_next_hop(%__MODULE__{entries: entries}, destination) do
+    entries
+    |> Map.get(destination)
+    |> case do
+      [route | _rest_routes] when not is_nil(route.weight) -> route.gateway
+      _ -> nil
     end
   end
 
