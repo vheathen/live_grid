@@ -26,6 +26,7 @@ defmodule LiveGrid.Node do
   @type peer :: t()
   @type neighbors :: [peer()]
   @type neighbor_refs :: %{peer() => reference()}
+  @type routes :: LiveGrid.Routes.t()
 
   def offer_connection(attrs) do
     message = ConnectionOffered.new(attrs)

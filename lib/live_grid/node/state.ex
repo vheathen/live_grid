@@ -1,12 +1,11 @@
 defmodule LiveGrid.Node.State do
-  alias LiveGrid.Node, as: LiveNode
   alias LiveGrid.Routes
 
   @type t :: %__MODULE__{
-          me: LiveNode.peer(),
-          routes: LiveGrid.Routes.t(),
-          neighbors: LiveNode.neighbors(),
-          neighbor_refs: LiveNode.neighbor_refs()
+          me: LiveGrid.Node.peer(),
+          routes: LiveGrid.Node.routes(),
+          neighbors: LiveGrid.Node.neighbors(),
+          neighbor_refs: LiveGrid.Node.neighbor_refs()
         }
 
   @enforce_keys [:me]
