@@ -104,7 +104,7 @@ defmodule LiveGrid.NodeTest do
       assert {:ok, _} = LiveNode.init(node)
 
       refute_receive :connect_to_peers, 45
-      assert_receive :connect_to_peers, 10
+      assert_receive :connect_to_peers, 20
     end
   end
 
@@ -142,6 +142,8 @@ defmodule LiveGrid.NodeTest do
     assert %{neighbors: []} = state = State.new(me: me)
     message = ConnectionOffered.new(offered_from: peer, offered_to: me)
 
+    assert {:noreply, %State{me: ^me} = state} = LiveNode.handle_cast(message, state)
+
     another_peer = {10, 10}
     register(another_peer)
     another_message = ConnectionOffered.new(offered_from: another_peer, offered_to: me)
@@ -157,6 +159,8 @@ defmodule LiveGrid.NodeTest do
   def connection_offer_accepted_setup(%{node: me, peer: peer}) do
     assert %{neighbors: []} = state = State.new(me: me)
     message = ConnectionOfferAccepted.new(offered_from: me, accepted_by: peer)
+
+    assert {:noreply, %State{me: ^me} = state} = LiveNode.handle_cast(message, state)
 
     another_peer = {10, 10}
     register(another_peer)
@@ -186,8 +190,6 @@ defmodule LiveGrid.NodeTest do
                state: state,
                message: message
              } do
-          assert {:noreply, %State{me: ^me} = state} = LiveNode.handle_cast(message, state)
-
           assert_received {:"$gen_cast",
                            %ConnectionOfferAccepted{
                              offered_from: ^peer,
@@ -212,8 +214,7 @@ defmodule LiveGrid.NodeTest do
         another_peer: another_peer,
         another_message: another_message
       } do
-        assert {:noreply, %State{me: ^me, neighbors: [^peer]} = state} =
-                 LiveNode.handle_cast(message, state)
+        assert %State{neighbors: [^peer]} = state
 
         assert {:noreply, %State{me: ^me, neighbors: [^peer]} = state} =
                  LiveNode.handle_cast(message, state)
@@ -230,8 +231,7 @@ defmodule LiveGrid.NodeTest do
         another_peer: another_peer,
         another_message: another_message
       } do
-        assert {:noreply, %State{me: ^me, neighbor_refs: neighbor_refs} = state} =
-                 LiveNode.handle_cast(message, state)
+        assert %State{neighbor_refs: neighbor_refs} = state
 
         assert [{ref, ^peer}] = Enum.into(neighbor_refs, [])
         assert is_reference(ref)
@@ -258,37 +258,29 @@ defmodule LiveGrid.NodeTest do
         another_peer: another_peer,
         another_message: another_message
       } do
-        assert {:noreply, %State{me: ^me, routes: routes} = state} =
-                 LiveNode.handle_cast(message, state)
+        assert %Routes{entries: %{^peer => [%{gateway: ^peer, weight: 1}]}} = state.routes
 
-        assert %Routes{entries: %{^peer => [%{gateway: ^peer, weight: 1}]}} = routes
+        assert {:noreply, %State{me: ^me} = state} = LiveNode.handle_cast(message, state)
+        assert %Routes{entries: %{^peer => [%{gateway: ^peer, weight: 1}]}} = state.routes
 
-        assert {:noreply, %State{me: ^me, routes: routes} = state} =
-                 LiveNode.handle_cast(message, state)
-
-        assert %Routes{entries: %{^peer => [%{gateway: ^peer, weight: 1}]}} = routes
-
-        assert {:noreply, %State{me: ^me, routes: routes} = _state} =
-                 LiveNode.handle_cast(another_message, state)
+        assert {:noreply, %State{me: ^me} = state} = LiveNode.handle_cast(another_message, state)
 
         assert %Routes{
                  entries: %{
                    ^peer => [%{gateway: ^peer, weight: 1}],
                    ^another_peer => [%{gateway: ^another_peer, weight: 1}]
                  }
-               } = routes
+               } = state.routes
       end
 
       test "should notify neighbors about the new route", %{
         node: me,
         peer: peer,
         state: state,
-        message: message,
+        message: _message,
         another_peer: another_peer,
         another_message: another_message
       } do
-        assert {:noreply, %State{me: ^me} = state} = LiveNode.handle_cast(message, state)
-
         refute_received {:"$gen_cast",
                          %RouteUpdated{
                            to: ^peer,
@@ -314,6 +306,147 @@ defmodule LiveGrid.NodeTest do
       end
     end
   end)
+
+  describe "on monitoring peer process exit" do
+    setup :connection_offered_setup
+
+    setup %{
+      peer: peer,
+      state: state,
+      another_peer: another_peer
+    } do
+      assert [{ref, ^peer}] = Enum.into(state.neighbor_refs, [])
+      assert peer == Routes.get_next_hop(state.routes, peer)
+      assert peer in state.neighbors
+
+      state = %{state | neighbors: [another_peer | state.neighbors]}
+
+      assert {:noreply, state} =
+               LiveNode.handle_info({:DOWN, ref, :process, self(), :normal}, state)
+
+      [state: state]
+    end
+
+    test "should remove a neighbor ref from neighbor_refs if its there", %{
+      node: _me,
+      peer: _peer,
+      state: state
+    } do
+      assert state.neighbor_refs == %{}
+    end
+
+    test "should remove a neighbor from neighbors if its there", %{
+      node: _me,
+      peer: peer,
+      state: state
+    } do
+      refute peer in state.neighbors
+    end
+
+    test "should remove a neighbor's route if its there", %{
+      node: _me,
+      peer: peer,
+      state: state
+    } do
+      assert is_nil(Routes.get_next_hop(state.routes, peer))
+    end
+
+    test "should notify other neighbors than the route is gone", %{
+      node: me,
+      peer: peer,
+      state: _state,
+      another_peer: another_peer
+    } do
+      assert_received {:"$gen_cast",
+                       %RouteUpdated{
+                         to: ^another_peer,
+                         from: ^me,
+                         destination: ^peer,
+                         weight: nil,
+                         serial: serial
+                       }}
+
+      assert is_integer(serial)
+      assert serial < System.system_time(:microsecond)
+    end
+  end
+
+  describe "handle_cast(%RouteUpdated{}, state" do
+    setup :connection_offered_setup
+
+    setup %{node: me, peer: peer, state: state, another_peer: another_peer} do
+      assert %Routes{entries: %{^peer => [%{gateway: ^peer, weight: 1}]}} = state.routes
+
+      state = %{state | neighbors: [another_peer | state.neighbors]}
+
+      destination = {100, 100}
+
+      route_message =
+        RouteUpdated.new(to: me, from: peer, destination: destination, weight: 50, serial: 100)
+
+      assert {:noreply, %State{} = state} = LiveNode.handle_cast(route_message, state)
+
+      [state: state, destination: destination, message: route_message]
+    end
+
+    test "should update local route table", %{
+      node: me,
+      peer: peer,
+      state: state,
+      destination: destination
+    } do
+      assert %Routes{
+               entries: %{
+                 ^peer => [%{gateway: ^peer, weight: 1}],
+                 ^destination => [%{gateway: ^peer, weight: 51, serial: 100}]
+               }
+             } = state.routes
+
+      route_message =
+        RouteUpdated.new(to: me, from: peer, destination: destination, weight: nil, serial: 200)
+
+      assert {:noreply, %State{} = state} = LiveNode.handle_cast(route_message, state)
+
+      assert %Routes{
+               entries: %{
+                 ^peer => [%{gateway: ^peer, weight: 1}],
+                 ^destination => [%{gateway: ^peer, weight: nil, serial: 200}]
+               }
+             } = state.routes
+    end
+
+    test "should NOT update local route table if destination == itself", %{
+      node: me,
+      peer: peer,
+      state: state
+    } do
+      destination = me
+
+      route_message =
+        RouteUpdated.new(to: me, from: peer, destination: destination, weight: 1, serial: 200)
+
+      assert {:noreply, %State{} = ^state} = LiveNode.handle_cast(route_message, state)
+    end
+
+    test "should notify other neighbors about route update", %{
+      node: me,
+      destination: destination,
+      another_peer: another_peer,
+      message: route_message
+    } do
+      expected_weight = route_message.weight + 1
+      serial = route_message.serial
+
+      assert_received {:"$gen_cast",
+                       %RouteUpdated{
+                         to: ^another_peer,
+                         from: ^me,
+                         destination: ^destination,
+                         weight: ^expected_weight,
+                         serial: ^serial
+                       }}
+    end
+  end
 
   def register(node), do: {:ok, _} = Registry.register(LiveGrid, node, nil)
 end

@@ -94,12 +94,52 @@ defmodule LiveGrid.Node do
   end
 
   @impl GenServer
+  def handle_cast(%RouteUpdated{destination: me} = _route_update, %State{me: me} = state) do
+    {:noreply, state}
+  end
+
+  @impl GenServer
+  def handle_cast(%RouteUpdated{from: peer, weight: weight} = route_update, %State{} = state) do
+    state =
+      if peer in state.neighbors do
+        route =
+          Route.new(
+            gateway: peer,
+            weight: (weight && weight + 1) || weight,
+            serial: route_update.serial
+          )
+
+        add_or_update_route(state, route_update.destination, route)
+      else
+        state
+      end
+
+    {:noreply, state}
+  end
+
+  @impl GenServer
   def handle_info(:connect_to_peers, %State{me: me, neighbors: neighbors} = state) do
     me
     |> possible_neighbors()
     |> Stream.reject(&(&1 in neighbors))
     |> Stream.each(&offer_connection(offered_to: &1, offered_from: me))
     |> Stream.run()
+
+    {:noreply, state}
+  end
+
+  @impl GenServer
+  def handle_info({:DOWN, node_ref, :process, _pid, _reason}, %State{} = state) do
+    state =
+      case Map.get(state.neighbor_refs, node_ref) do
+        nil ->
+          state
+
+        node ->
+          state
+          |> stop_monitoring_and_remove_node_from_neighbors(node_ref)
+          |> add_or_update_route(node, Route.new(gateway: node, weight: nil))
+      end
 
     {:noreply, state}
   end
@@ -112,18 +152,30 @@ defmodule LiveGrid.Node do
 
   defp handle_new_peer(%State{} = state, peer) do
     state
-    |> add_node_as_neighbor(peer)
-    |> start_monitoring_node(peer)
+    |> add_node_as_neighbor_and_start_monitoring(peer)
     |> add_or_update_route(peer, Route.new(gateway: peer, weight: 1))
   end
 
-  defp add_node_as_neighbor(%State{} = state, node),
-    do: update_in(state, [Access.key(:neighbors)], &[node | &1])
+  defp add_node_as_neighbor_and_start_monitoring(%State{} = state, node) do
+    node_ref = Process.monitor(find_pid(node))
 
-  defp start_monitoring_node(%State{} = state, node) do
-    ref = Process.monitor(find_pid(node))
+    %{
+      state
+      | neighbors: [node | state.neighbors],
+        neighbor_refs: Map.put(state.neighbor_refs, node_ref, node)
+    }
+  end
 
-    update_in(state, [Access.key(:neighbor_refs)], &Map.put(&1, ref, node))
+  defp stop_monitoring_and_remove_node_from_neighbors(%State{} = state, node_ref) do
+    Process.demonitor(node_ref)
+
+    {node, neighbor_refs} = Map.pop(state.neighbor_refs, node_ref)
+
+    %{
+      state
+      | neighbor_refs: neighbor_refs,
+        neighbors: List.delete(state.neighbors, node)
+    }
   end
 
   defp add_or_update_route(%State{} = state, destination, route) do
