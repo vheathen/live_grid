@@ -273,6 +273,36 @@ defmodule LiveGrid.NodeTest do
                } = state.routes
       end
 
+      test "should sent all current routes to a peer if new", %{
+        node: me,
+        peer: peer,
+        state: state,
+        message: message,
+        another_peer: another_peer,
+        another_message: another_message
+      } do
+        assert %Routes{entries: %{^peer => [%{gateway: ^peer, weight: 1, serial: peer_serial}]}} =
+                 state.routes
+
+        assert {:noreply, %State{me: ^me} = state} = GridNode.handle_cast(another_message, state)
+
+        assert %Routes{
+                 entries: %{
+                   ^peer => [%{gateway: ^peer, weight: 1}],
+                   ^another_peer => [%{gateway: ^another_peer, weight: 1}]
+                 }
+               } = state.routes
+
+        assert_received {:"$gen_cast",
+                         %RouteUpdated{
+                           to: ^another_peer,
+                           from: ^me,
+                           destination: ^peer,
+                           weight: 1,
+                           serial: ^peer_serial
+                         }}
+      end
+
       test "should notify neighbors about the new route", %{
         node: me,
         peer: peer,

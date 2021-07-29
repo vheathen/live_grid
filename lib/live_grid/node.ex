@@ -154,6 +154,7 @@ defmodule LiveGrid.Node do
   defp handle_new_peer(%State{} = state, peer) do
     state
     |> add_node_as_neighbor_and_start_monitoring(peer)
+    |> send_current_routes_to_peer(peer)
     |> add_or_update_route(peer, Route.new(gateway: peer, weight: 1))
   end
 
@@ -194,14 +195,31 @@ defmodule LiveGrid.Node do
   def notify_neighbors(%State{} = state, destination, %Route{} = route) do
     state.neighbors
     |> Enum.each(fn node ->
+      if node != route.gateway do
+        send_route_update(
+          to: node,
+          from: state.me,
+          destination: destination,
+          weight: route.weight,
+          serial: route.serial
+        )
+      end
+    end)
+  end
+
+  def send_current_routes_to_peer(%State{} = state, peer) do
+    for {destination, routes} <- state.routes.entries,
+        %Route{weight: weight, serial: serial} <- routes do
       send_route_update(
-        to: node,
+        to: peer,
         from: state.me,
         destination: destination,
-        weight: route.weight,
-        serial: route.serial
+        weight: weight,
+        serial: serial
       )
-    end)
+    end
+
+    state
   end
 
   defp find_pid(node) do
