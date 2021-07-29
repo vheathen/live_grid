@@ -5,6 +5,17 @@ defmodule LiveGrid.Node do
 
   alias LiveGrid.Node.State
 
+  alias LiveGrid.Routes
+  alias LiveGrid.Routes.Route
+
+  alias LiveGrid.Message.{
+    ConnectionOffered,
+    ConnectionOfferAccepted,
+    RouteUpdated
+  }
+
+  # alias LiveGrid.Routes
+
   @default_initial_timeout 2_000
 
   @type x :: non_neg_integer()
@@ -13,9 +24,37 @@ defmodule LiveGrid.Node do
   @type t :: {x(), y()}
 
   @type peer :: t()
+  @type neighbors :: [peer()]
+  @type neighbor_refs :: %{peer() => reference()}
 
-  @spec name(peer :: peer()) :: {:via, Registry, {LiveGrid, peer()}}
-  def name(peer), do: {:via, Registry, {LiveGrid, peer}}
+  def offer_connection(attrs) do
+    message = ConnectionOffered.new(attrs)
+    GenServer.cast(name(message.offered_to), message)
+  end
+
+  def accept_connection_offer(attrs) do
+    message = ConnectionOfferAccepted.new(attrs)
+    GenServer.cast(name(message.offered_from), message)
+  end
+
+  def send_route_update(attrs) do
+    message = RouteUpdated.new(attrs)
+    GenServer.cast(name(message.to), message)
+  end
+
+  @spec name(node :: peer()) :: {:via, Registry, {LiveGrid, peer()}}
+  def name(node), do: {:via, Registry, {LiveGrid, node}}
+
+  def initial_timeout, do: get_config(Node, :initial_timeout, @default_initial_timeout)
+
+  def possible_neighbors({x, y} = node) do
+    for nx <- [x - 1, x, x + 1],
+        nx >= 0,
+        ny <- [y - 1, y, y + 1],
+        ny >= 0,
+        {nx, ny} != node,
+        do: {nx, ny}
+  end
 
   def start_link({_x, _y} = me) do
     GenServer.start_link(__MODULE__, me, name: name(me))
@@ -23,10 +62,99 @@ defmodule LiveGrid.Node do
 
   @impl GenServer
   def init(me) do
-    Process.send_after(self(), :link_to_peers, initial_timeout())
+    Process.send_after(self(), :connect_to_peers, initial_timeout())
 
-    {:ok, %State{me: me}}
+    {:ok, State.new(me: me)}
   end
 
-  def initial_timeout, do: get_config(Node, :initial_timeout, @default_initial_timeout)
+  @impl GenServer
+  def handle_cast(%ConnectionOffered{offered_from: offerer}, %State{} = state) do
+    state =
+      if offerer not in state.neighbors do
+        state
+        |> accept_offer(offerer)
+        |> handle_new_peer(offerer)
+      else
+        state
+      end
+
+    {:noreply, state}
+  end
+
+  @impl GenServer
+  def handle_cast(%ConnectionOfferAccepted{accepted_by: accepter}, %State{} = state) do
+    state =
+      if accepter not in state.neighbors do
+        handle_new_peer(state, accepter)
+      else
+        state
+      end
+
+    {:noreply, state}
+  end
+
+  @impl GenServer
+  def handle_info(:connect_to_peers, %State{me: me, neighbors: neighbors} = state) do
+    me
+    |> possible_neighbors()
+    |> Stream.reject(&(&1 in neighbors))
+    |> Stream.each(&offer_connection(offered_to: &1, offered_from: me))
+    |> Stream.run()
+
+    {:noreply, state}
+  end
+
+  defp accept_offer(%State{me: me} = state, offerer) do
+    accept_connection_offer(accepted_by: me, offered_from: offerer)
+
+    state
+  end
+
+  defp handle_new_peer(%State{} = state, peer) do
+    state
+    |> add_node_as_neighbor(peer)
+    |> start_monitoring_node(peer)
+    |> add_or_update_route(peer, Route.new(gateway: peer, weight: 1))
+  end
+
+  defp add_node_as_neighbor(%State{} = state, node),
+    do: update_in(state, [Access.key(:neighbors)], &[node | &1])
+
+  defp start_monitoring_node(%State{} = state, node) do
+    ref = Process.monitor(find_pid(node))
+
+    update_in(state, [Access.key(:neighbor_refs)], &Map.put(&1, ref, node))
+  end
+
+  defp add_or_update_route(%State{} = state, destination, route) do
+    case Routes.update_route(state.routes, destination, route) do
+      {:ok, routes} ->
+        notify_neighbors(state, destination, route)
+
+        %{state | routes: routes}
+
+      _ ->
+        state
+    end
+  end
+
+  def notify_neighbors(%State{} = state, destination, %Route{} = route) do
+    state.neighbors
+    |> Enum.each(fn node ->
+      send_route_update(
+        to: node,
+        from: state.me,
+        destination: destination,
+        weight: route.weight,
+        serial: route.serial
+      )
+    end)
+  end
+
+  defp find_pid(node) do
+    case Registry.lookup(LiveGrid, node) do
+      [{pid, nil}] when is_pid(pid) -> pid
+      _ -> nil
+    end
+  end
 end

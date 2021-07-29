@@ -14,9 +14,13 @@ defmodule LiveGrid.Routes.Route do
           serial: serial()
         }
 
-  @enforce_keys [:gateway, :weight, :serial]
+  @enforce_keys [:gateway, :weight]
   defstruct gateway: nil, weight: nil, serial: nil
 
   @spec new(Enum.t()) :: t()
-  def new(attrs), do: struct!(__MODULE__, attrs)
+  def new(attrs) do
+    __MODULE__
+    |> struct!(attrs)
+    |> Map.update(:serial, nil, &(&1 || System.system_time(:microsecond)))
+  end
 end
