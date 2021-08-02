@@ -5,7 +5,7 @@ defmodule LiveGrid.NodeTest do
   alias LiveGrid.Node.State
 
   alias LiveGrid.Routes
-  # alias LiveGrid.Routes.Route
+  alias LiveGrid.Routes.Route
 
   alias LiveGrid.Message.{
     ConnectionOffered,
@@ -277,7 +277,7 @@ defmodule LiveGrid.NodeTest do
         node: me,
         peer: peer,
         state: state,
-        message: message,
+        message: _message,
         another_peer: another_peer,
         another_message: another_message
       } do
@@ -349,7 +349,15 @@ defmodule LiveGrid.NodeTest do
       assert peer == Routes.get_next_hop(state.routes, peer)
       assert peer in state.neighbors
 
-      state = %{state | neighbors: [another_peer | state.neighbors]}
+      state = %{
+        state
+        | neighbors: [another_peer | state.neighbors],
+          routes:
+            Routes.update_route(
+              state.routes,
+              Route.new(destination: {1000, 1000}, gateway: peer, weight: 1000)
+            )
+      }
 
       assert {:noreply, state} =
                GridNode.handle_info({:DOWN, ref, :process, self(), :normal}, state)
@@ -375,10 +383,27 @@ defmodule LiveGrid.NodeTest do
 
     test "should remove a neighbor's route if its there", %{
       node: _me,
-      peer: peer,
+      peer: _peer,
       state: state
     } do
-      assert is_nil(Routes.get_next_hop(state.routes, peer))
+      assert %{
+               {9, 9} => [
+                 %LiveGrid.Routes.Route{
+                   destination: {9, 9},
+                   gateway: {9, 9},
+                   serial: _,
+                   weight: nil
+                 }
+               ],
+               {1000, 1000} => [
+                 %LiveGrid.Routes.Route{
+                   destination: {1000, 1000},
+                   gateway: {9, 9},
+                   serial: _,
+                   weight: nil
+                 }
+               ]
+             } = state.routes.entries
     end
 
     test "should notify other neighbors than the route is gone", %{

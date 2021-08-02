@@ -14,10 +14,10 @@ defmodule LiveGrid.Node.State do
             neighbors: [],
             neighbor_refs: %{}
 
-  def new(attrs) do
+  def new(attrs \\ []) do
     %{
       struct!(__MODULE__, attrs)
-      | routes: Routes.new()
+      | routes: Routes.new(attrs)
     }
   end
 end

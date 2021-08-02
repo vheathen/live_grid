@@ -105,12 +105,13 @@ defmodule LiveGrid.Node do
       if peer in state.neighbors do
         route =
           Route.new(
+            destination: route_update.destination,
             gateway: peer,
             weight: (weight && weight + 1) || weight,
             serial: route_update.serial
           )
 
-        add_or_update_route(state, route_update.destination, route)
+        add_or_update_route(state, route)
       else
         state
       end
@@ -139,7 +140,8 @@ defmodule LiveGrid.Node do
         node ->
           state
           |> stop_monitoring_and_remove_node_from_neighbors(node_ref)
-          |> add_or_update_route(node, Route.new(gateway: node, weight: nil))
+          |> put_in([Access.key(:routes)], Routes.remove_neighbor_routes(state.routes, node))
+          |> send_route_updates_to_neighbors()
       end
 
     {:noreply, state}
@@ -155,7 +157,7 @@ defmodule LiveGrid.Node do
     state
     |> add_node_as_neighbor_and_start_monitoring(peer)
     |> send_current_routes_to_peer(peer)
-    |> add_or_update_route(peer, Route.new(gateway: peer, weight: 1))
+    |> add_or_update_route(Route.new(destination: peer, gateway: peer, weight: 1))
   end
 
   defp add_node_as_neighbor_and_start_monitoring(%State{} = state, node) do
@@ -180,36 +182,37 @@ defmodule LiveGrid.Node do
     }
   end
 
-  defp add_or_update_route(%State{} = state, destination, route) do
-    case Routes.update_route(state.routes, destination, route) do
-      {:ok, routes} ->
-        notify_neighbors(state, destination, route)
-
-        %{state | routes: routes}
-
-      _ ->
-        state
-    end
+  defp add_or_update_route(%State{} = state, route) do
+    state
+    |> put_in([Access.key(:routes)], Routes.update_route(state.routes, route))
+    |> send_route_updates_to_neighbors()
+    |> put_in([Access.key(:routes), Access.key(:updated_destinations)], [])
   end
 
-  def notify_neighbors(%State{} = state, destination, %Route{} = route) do
-    state.neighbors
-    |> Enum.each(fn node ->
-      if node != route.gateway do
-        send_route_update(
-          to: node,
-          from: state.me,
-          destination: destination,
-          weight: route.weight,
-          serial: route.serial
-        )
+  def send_route_updates_to_neighbors(%State{} = state) do
+    Enum.each(
+      state.neighbors,
+      fn neighbor ->
+        state.routes
+        |> Routes.get_updates_for(neighbor)
+        |> Enum.each(fn route_update ->
+          send_route_update(
+            to: neighbor,
+            from: state.me,
+            destination: route_update.destination,
+            weight: route_update.weight,
+            serial: route_update.serial
+          )
+        end)
       end
-    end)
+    )
+
+    state
   end
 
   def send_current_routes_to_peer(%State{} = state, peer) do
-    for {destination, routes} <- state.routes.entries,
-        %Route{weight: weight, serial: serial} <- routes do
+    for {destination, [shortest_route | _rest]} <- state.routes.entries,
+        %Route{weight: weight, serial: serial} = shortest_route do
       send_route_update(
         to: peer,
         from: state.me,
