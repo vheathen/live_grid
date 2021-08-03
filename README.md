@@ -1,19 +1,19 @@
 # LiveGrid
 
-To start your Phoenix server:
+It's an educational project: an interprocess communication and message routing example.
 
-  * Install dependencies with `mix deps.get`
-  * Install Node.js dependencies with `npm install` inside the `assets` directory
-  * Start Phoenix endpoint with `mix phx.server`
+The main idea is to start any number of processes where each process has name as a coordinate
+of a grid cell (like `{1, 2}` or `{5, 192}`). Each process can reach only its direct neighbors:
 
-Now you can visit [`localhost:4000`](http://localhost:4000) from your browser.
+```
+{0, 1}     {0, 2}     {0, 3}
+{1, 1}   <<{1, 2}>>   {1, 3}
+{2, 1}     {2, 2}     {2, 3}
+```
 
-Ready to run in production? Please [check our deployment guides](https://hexdocs.pm/phoenix/deployment.html).
+On every grid configuration change (grid node started or shutdowned) route updates must issued.
 
-## Learn more
+Then any grid node can be able to send a message to any other grid node and it should be delivered through
+the grid if continuous routing exists.
 
-  * Official website: https://www.phoenixframework.org/
-  * Guides: https://hexdocs.pm/phoenix/overview.html
-  * Docs: https://hexdocs.pm/phoenix
-  * Forum: https://elixirforum.com/c/phoenix-forum
-  * Source: https://github.com/phoenixframework/phoenix
+It's not finished yet, but processes can be started and can exchange routing information.
